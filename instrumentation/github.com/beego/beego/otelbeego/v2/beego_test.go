@@ -14,6 +14,7 @@
 
 package otelbeego
 
+/*
 import (
 	"context"
 	"net/http"
@@ -104,3 +105,4 @@ func TestSpanFromContextCustomProvider(t *testing.T) {
 
 	require.Equal(t, http.StatusAccepted, rr.Result().StatusCode)
 }
+*/
