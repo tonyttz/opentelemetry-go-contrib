@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package otelbeego
+package otelbeego // import "go.opentelemetry.io/contrib/instrumentation/github.com/astaxie/beego/otelbeego"
 
 import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/global"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -99,7 +98,7 @@ func WithSpanNameFormatter(f SpanNameFormatter) Option {
 func newConfig(options ...Option) *config {
 	config := &config{
 		tracerProvider: otel.GetTracerProvider(),
-		meterProvider:  global.GetMeterProvider(),
+		meterProvider:  otel.GetMeterProvider(),
 		propagators:    otel.GetTextMapPropagator(),
 		filters:        []Filter{},
 		formatter:      defaultSpanNameFormatter,

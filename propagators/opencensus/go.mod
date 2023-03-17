@@ -1,11 +1,21 @@
 module go.opentelemetry.io/contrib/propagators/opencensus
 
-go 1.16
+go 1.19
 
 require (
-	github.com/google/go-cmp v0.5.6
-	go.opencensus.io v0.22.6-0.20201102222123-380f4078db9f
-	go.opentelemetry.io/otel v1.3.0
-	go.opentelemetry.io/otel/bridge/opencensus v0.26.0
-	go.opentelemetry.io/otel/trace v1.3.0
+	github.com/google/go-cmp v0.5.9
+	go.opencensus.io v0.24.0
+	go.opentelemetry.io/otel v1.15.0-rc.1
+	go.opentelemetry.io/otel/bridge/opencensus v0.38.0-rc.1
+	go.opentelemetry.io/otel/trace v1.15.0-rc.1
+)
+
+require (
+	github.com/go-logr/logr v1.2.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e // indirect
+	go.opentelemetry.io/otel/metric v1.15.0-rc.1 // indirect
+	go.opentelemetry.io/otel/sdk v1.15.0-rc.1 // indirect
+	go.opentelemetry.io/otel/sdk/metric v0.38.0-rc.1 // indirect
+	golang.org/x/sys v0.5.0 // indirect
 )

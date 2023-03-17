@@ -29,16 +29,16 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func initTracer() *sdktrace.TracerProvider {
+func initTracer() (*sdktrace.TracerProvider, error) {
 	// Create stdout exporter to be able to retrieve
 	// the collected spans.
 	exporter, err := stdout.New(stdout.WithPrettyPrint())
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	// For the demonstration, use sdktrace.AlwaysSample sampler to sample all traces.
@@ -46,15 +46,18 @@ func initTracer() *sdktrace.TracerProvider {
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceNameKey.String("ExampleService"))),
+		sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName("ExampleService"))),
 	)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-	return tp
+	return tp, nil
 }
 
 func main() {
-	tp := initTracer()
+	tp, err := initTracer()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Printf("Error shutting down tracer provider: %v", err)
@@ -75,8 +78,8 @@ func main() {
 	otelHandler := otelhttp.NewHandler(http.HandlerFunc(helloHandler), "Hello")
 
 	http.Handle("/hello", otelHandler)
-	err := http.ListenAndServe(":7777", nil)
+	err = http.ListenAndServe(":7777", nil)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 }

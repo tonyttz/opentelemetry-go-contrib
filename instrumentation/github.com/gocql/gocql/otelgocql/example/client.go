@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build go1.18
+// +build go1.18
+
+package main
+
 // This example will create the keyspace
 // "gocql_integration_example" and a single table
 // with the following schema:
@@ -24,8 +29,6 @@
 // The example will insert fictional books into the database and
 // then truncate the table.
 
-package main
-
 import (
 	"context"
 	"fmt"
@@ -37,16 +40,13 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/prometheus"
-	zipkintrace "go.opentelemetry.io/otel/exporters/zipkin"
-	"go.opentelemetry.io/otel/metric/global"
-	"go.opentelemetry.io/otel/sdk/export/metric/aggregation"
-	"go.opentelemetry.io/otel/sdk/metric/aggregator/histogram"
-	controller "go.opentelemetry.io/otel/sdk/metric/controller/basic"
-	processor "go.opentelemetry.io/otel/sdk/metric/processor/basic"
-	"go.opentelemetry.io/otel/sdk/metric/selector/simple"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/exporters/zipkin"
+	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/aggregation"
 	"go.opentelemetry.io/otel/sdk/trace"
 
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gocql/gocql/otelgocql"
@@ -57,10 +57,17 @@ const keyspace = "gocql_integration_example"
 var wg sync.WaitGroup
 
 func main() {
-	initMetrics()
-	tp := initTracer()
-	defer func() { tp.Shutdown(context.Background()) }() //nolint:errcheck
-	initDb()
+	if err := initMetrics(); err != nil {
+		log.Fatalf("failed to install metric exporter, %v", err)
+	}
+	tp, err := initTracer()
+	if err != nil {
+		log.Fatalf("failed to create zipkin exporter: %s", err)
+	}
+	defer func() { tp.Shutdown(context.Background()) }() //nolint:revive,errcheck
+	if err := initDb(); err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, span := otel.Tracer(
 		"go.opentelemetry.io/contrib/instrumentation/github.com/gocql/gocql/otelgocql/example",
@@ -117,91 +124,105 @@ func main() {
 	wg.Wait()
 }
 
-func initMetrics() {
-	// Start prometheus
-	cont := controller.New(
-		processor.NewFactory(
-			simple.NewWithHistogramDistribution(
-				histogram.WithExplicitBoundaries([]float64{0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10}),
-			),
-			aggregation.CumulativeTemporalitySelector(),
-			processor.WithMemory(true),
+func views() []metric.View {
+	return []metric.View{
+		metric.NewView(
+			metric.Instrument{
+				Name: "db.cassandra.rows",
+			},
+			metric.Stream{
+				Aggregation: aggregation.ExplicitBucketHistogram{
+					Boundaries: []float64{0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10},
+				},
+			},
 		),
-	)
-	metricExporter, err := prometheus.New(prometheus.Config{}, cont)
-	if err != nil {
-		log.Fatalf("failed to install metric exporter, %v", err)
+		metric.NewView(
+			metric.Instrument{Name: "db.cassandra.latency"},
+			metric.Stream{
+				Aggregation: aggregation.ExplicitBucketHistogram{
+					Boundaries: []float64{0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10},
+				},
+			},
+		),
 	}
-	global.SetMeterProvider(metricExporter.MeterProvider())
-
-	server := http.Server{Addr: ":2222"}
-	http.HandleFunc("/", metricExporter.ServeHTTP)
-	go func() {
-		defer wg.Done()
-		wg.Add(1)
-		log.Print(server.ListenAndServe())
-	}()
-
-	// ctrl+c will stop the server gracefully
-	shutdown := make(chan os.Signal, 1)
-	signal.Notify(shutdown, os.Interrupt)
-	go func() {
-		<-shutdown
-		if err := server.Shutdown(context.Background()); err != nil {
-			log.Printf("problem shutting down server, %v", err)
-		} else {
-			log.Print("gracefully shutting down server")
-		}
-		err := cont.Stop(context.Background())
-		if err != nil {
-			log.Printf("error stopping metric controller: %s", err)
-		}
-	}()
 }
 
-func initTracer() *trace.TracerProvider {
-	exporter, err := zipkintrace.New("http://localhost:9411/api/v2/spans")
+func initMetrics() error {
+	vs := views()
+
+	exporter, err := otelprom.New()
 	if err != nil {
-		log.Fatalf("failed to create zipkin exporter: %s", err)
+		return err
+	}
+	provider := metric.NewMeterProvider(
+		metric.WithReader(exporter),
+		metric.WithView(vs...),
+	)
+	otel.SetMeterProvider(provider)
+
+	http.Handle("/", promhttp.Handler())
+	log.Print("Serving metrics at :2222/")
+	go func() {
+		err := http.ListenAndServe(":2222", nil)
+		if err != nil {
+			log.Print(err)
+		}
+	}()
+
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-ctx.Done()
+		err := provider.Shutdown(context.Background())
+		if err != nil {
+			log.Printf("error stopping MeterProvider: %s", err)
+		}
+	}()
+	return nil
+}
+
+func initTracer() (*trace.TracerProvider, error) {
+	exporter, err := zipkin.New("http://localhost:9411/api/v2/spans")
+	if err != nil {
+		return nil, err
 	}
 
 	tp := trace.NewTracerProvider(trace.WithBatcher(exporter))
 	otel.SetTracerProvider(tp)
 
-	return tp
+	return tp, nil
 }
 
-func initDb() {
+func initDb() error {
 	cluster := gocql.NewCluster("127.0.0.1")
 	cluster.Keyspace = "system"
 	cluster.Consistency = gocql.LocalQuorum
 	cluster.Timeout = time.Second * 2
 	session, err := cluster.CreateSession()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	stmt := fmt.Sprintf(
 		"create keyspace if not exists %s with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }",
 		keyspace,
 	)
 	if err := session.Query(stmt).Exec(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	cluster.Keyspace = keyspace
 	session, err = cluster.CreateSession()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	stmt = "create table if not exists book(id UUID, title text, author_first_name text, author_last_name text, PRIMARY KEY(id))"
 	if err = session.Query(stmt).Exec(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	if err := session.Query("create index if not exists on book(author_last_name)").Exec(); err != nil {
-		log.Fatal(err)
-	}
+	return session.Query("create index if not exists on book(author_last_name)").Exec()
 }
 
 func getCluster() *gocql.ClusterConfig {

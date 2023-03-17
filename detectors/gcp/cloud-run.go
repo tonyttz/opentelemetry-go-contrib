@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gcp
+package gcp // import "go.opentelemetry.io/contrib/detectors/gcp"
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"cloud.google.com/go/compute/metadata"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 const serviceNamespace = "cloud-run-managed"
@@ -37,6 +38,7 @@ type metadataClient interface {
 }
 
 // CloudRun collects resource information of Cloud Run instance.
+// Deprecated: Use gcp.NewDetector() instead. Note that it sets faas.* resource attributes instead of service.* attributes.
 type CloudRun struct {
 	mc     metadataClient
 	onGCE  func() bool
@@ -48,12 +50,23 @@ type CloudRun struct {
 var _ resource.Detector = (*CloudRun)(nil)
 
 // NewCloudRun creates a CloudRun detector.
+// Deprecated: Use gcp.NewDetector() instead. Note that it sets faas.* resource attributes instead of service.* attributes.
 func NewCloudRun() *CloudRun {
 	return &CloudRun{
 		mc:     metadata.NewClient(nil),
 		onGCE:  metadata.OnGCE,
 		getenv: os.Getenv,
 	}
+}
+
+func (c *CloudRun) cloudRegion(ctx context.Context) (string, error) {
+	region, err := c.mc.Get("instance/region")
+	if err != nil {
+		return "", err
+	}
+	// Region from the metadata server is in the format /projects/123/regions/r.
+	// https://cloud.google.com/run/docs/reference/container-contract#metadata-server
+	return region[strings.LastIndex(region, "/")+1:], nil
 }
 
 // Detect detects associated resources when running on Cloud Run hosts.
@@ -69,7 +82,7 @@ func (c *CloudRun) Detect(ctx context.Context) (*resource.Resource, error) {
 
 	attributes := []attribute.KeyValue{
 		semconv.CloudProviderGCP,
-		semconv.ServiceNamespaceKey.String(serviceNamespace),
+		semconv.ServiceNamespace(serviceNamespace),
 	}
 
 	var errInfo []string
@@ -77,19 +90,19 @@ func (c *CloudRun) Detect(ctx context.Context) (*resource.Resource, error) {
 	if projectID, err := c.mc.ProjectID(); hasProblem(err) {
 		errInfo = append(errInfo, err.Error())
 	} else if projectID != "" {
-		attributes = append(attributes, semconv.CloudAccountIDKey.String(projectID))
+		attributes = append(attributes, semconv.CloudAccountID(projectID))
 	}
 
-	if region, err := c.mc.Get("instance/region"); hasProblem(err) {
+	if region, err := c.cloudRegion(ctx); hasProblem(err) {
 		errInfo = append(errInfo, err.Error())
 	} else if region != "" {
-		attributes = append(attributes, semconv.CloudRegionKey.String(region))
+		attributes = append(attributes, semconv.CloudRegion(region))
 	}
 
 	if instanceID, err := c.mc.InstanceID(); hasProblem(err) {
 		errInfo = append(errInfo, err.Error())
 	} else if instanceID != "" {
-		attributes = append(attributes, semconv.ServiceInstanceIDKey.String(instanceID))
+		attributes = append(attributes, semconv.ServiceInstanceID(instanceID))
 	}
 
 	// Part of Cloud Run container runtime contract.
@@ -97,7 +110,7 @@ func (c *CloudRun) Detect(ctx context.Context) (*resource.Resource, error) {
 	if service := c.getenv("K_SERVICE"); service == "" {
 		errInfo = append(errInfo, "envvar K_SERVICE contains empty string.")
 	} else {
-		attributes = append(attributes, semconv.ServiceNameKey.String(service))
+		attributes = append(attributes, semconv.ServiceName(service))
 	}
 	res := resource.NewWithAttributes(semconv.SchemaURL, attributes...)
 

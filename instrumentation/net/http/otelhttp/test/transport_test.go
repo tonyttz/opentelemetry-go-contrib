@@ -16,9 +16,10 @@ package test
 
 import (
 	"context"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"runtime"
 	"strings"
 	"testing"
@@ -68,7 +69,7 @@ func TestTransportUsesFormatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	require.NoError(t, res.Body.Close())
 
 	spans := spanRecorder.Ended()
 	spanName := spans[0].Name()
@@ -76,7 +77,6 @@ func TestTransportUsesFormatter(t *testing.T) {
 	if spanName != expectedName {
 		t.Fatalf("unexpected name: got %s, expected %s", spanName, expectedName)
 	}
-
 }
 
 func TestTransportErrorStatus(t *testing.T) {
@@ -162,7 +162,7 @@ func TestTransportRequestWithTraceContext(t *testing.T) {
 
 	span.End()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 
 	require.Equal(t, content, body)
@@ -174,4 +174,67 @@ func TestTransportRequestWithTraceContext(t *testing.T) {
 	assert.Equal(t, "HTTP GET", spans[1].Name())
 	assert.NotEmpty(t, spans[1].Parent().SpanID())
 	assert.Equal(t, spans[0].SpanContext().SpanID(), spans[1].Parent().SpanID())
+}
+
+func TestWithHTTPTrace(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(spanRecorder),
+	)
+	content := []byte("Hello, world!")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write(content)
+		require.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	tracer := provider.Tracer("")
+	ctx, span := tracer.Start(context.Background(), "test_span")
+
+	r, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+
+	r = r.WithContext(ctx)
+
+	clientTracer := func(ctx context.Context) *httptrace.ClientTrace {
+		var span trace.Span
+		return &httptrace.ClientTrace{
+			GetConn: func(_ string) {
+				_, span = trace.SpanFromContext(ctx).TracerProvider().Tracer("").Start(ctx, "httptrace.GetConn")
+			},
+			GotConn: func(_ httptrace.GotConnInfo) {
+				if span != nil {
+					span.End()
+				}
+			},
+		}
+	}
+
+	tr := otelhttp.NewTransport(
+		http.DefaultTransport,
+		otelhttp.WithClientTrace(clientTracer),
+	)
+
+	c := http.Client{Transport: tr}
+	res, err := c.Do(r)
+	require.NoError(t, err)
+
+	span.End()
+
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+
+	require.Equal(t, content, body)
+
+	spans := spanRecorder.Ended()
+	require.Len(t, spans, 3)
+
+	assert.Equal(t, "httptrace.GetConn", spans[0].Name())
+	assert.Equal(t, "test_span", spans[1].Name())
+	assert.Equal(t, "HTTP GET", spans[2].Name())
+	assert.NotEmpty(t, spans[0].Parent().SpanID())
+	assert.NotEmpty(t, spans[2].Parent().SpanID())
+	assert.Equal(t, spans[2].SpanContext().SpanID(), spans[0].Parent().SpanID())
+	assert.Equal(t, spans[1].SpanContext().SpanID(), spans[2].Parent().SpanID())
 }

@@ -15,6 +15,7 @@
 package test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,12 +26,64 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
+func TestCustomSpanNameFormatter(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+
+	routeTpl := "/user/{id}"
+
+	testdata := []struct {
+		spanNameFormatter func(string, *http.Request) string
+		expected          string
+	}{
+		{nil, routeTpl},
+		{
+			func(string, *http.Request) string { return "custom" },
+			"custom",
+		},
+		{
+			func(name string, r *http.Request) string {
+				return fmt.Sprintf("%s %s", r.Method, name)
+			},
+			"GET " + routeTpl,
+		},
+	}
+
+	for i, d := range testdata {
+		t.Run(fmt.Sprintf("%d_%s", i, d.expected), func(t *testing.T) {
+			router := mux.NewRouter()
+			router.Use(otelmux.Middleware(
+				"foobar",
+				otelmux.WithTracerProvider(tp),
+				otelmux.WithSpanNameFormatter(d.spanNameFormatter),
+			))
+			router.HandleFunc(routeTpl, func(w http.ResponseWriter, r *http.Request) {})
+
+			r := httptest.NewRequest("GET", "/user/123", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, r)
+
+			spans := exporter.GetSpans()
+			require.Len(t, spans, 1)
+			assert.Equal(t, d.expected, spans[0].Name)
+
+			exporter.Reset()
+		})
+	}
+}
+
 func ok(w http.ResponseWriter, _ *http.Request) {}
+func notfound(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, "not found", http.StatusNotFound)
+}
 
 func TestSDKIntegration(t *testing.T) {
 	sr := tracetest.NewSpanRecorder()
@@ -52,21 +105,44 @@ func TestSDKIntegration(t *testing.T) {
 	assertSpan(t, sr.Ended()[0],
 		"/user/{id:[0-9]+}",
 		trace.SpanKindServer,
-		attribute.String("http.server_name", "foobar"),
+		attribute.String("net.host.name", "foobar"),
 		attribute.Int("http.status_code", http.StatusOK),
 		attribute.String("http.method", "GET"),
-		attribute.String("http.target", "/user/123"),
 		attribute.String("http.route", "/user/{id:[0-9]+}"),
 	)
 	assertSpan(t, sr.Ended()[1],
 		"/book/{title}",
 		trace.SpanKindServer,
-		attribute.String("http.server_name", "foobar"),
+		attribute.String("net.host.name", "foobar"),
 		attribute.Int("http.status_code", http.StatusOK),
 		attribute.String("http.method", "GET"),
-		attribute.String("http.target", "/book/foo"),
 		attribute.String("http.route", "/book/{title}"),
 	)
+}
+
+func TestNotFoundIsNotError(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider()
+	provider.RegisterSpanProcessor(sr)
+
+	router := mux.NewRouter()
+	router.Use(otelmux.Middleware("foobar", otelmux.WithTracerProvider(provider)))
+	router.HandleFunc("/does/not/exist", notfound)
+
+	r0 := httptest.NewRequest("GET", "/does/not/exist", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r0)
+
+	require.Len(t, sr.Ended(), 1)
+	assertSpan(t, sr.Ended()[0],
+		"/does/not/exist",
+		trace.SpanKindServer,
+		attribute.String("net.host.name", "foobar"),
+		attribute.Int("http.status_code", http.StatusNotFound),
+		attribute.String("http.method", "GET"),
+		attribute.String("http.route", "/does/not/exist"),
+	)
+	assert.Equal(t, sr.Ended()[0].Status().Code, codes.Unset)
 }
 
 func assertSpan(t *testing.T, span sdktrace.ReadOnlySpan, name string, kind trace.SpanKind, attrs ...attribute.KeyValue) {

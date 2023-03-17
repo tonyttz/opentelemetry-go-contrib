@@ -38,7 +38,10 @@ var (
 )
 
 func main() {
-	tp := example.InitTracer()
+	tp, err := example.InitTracer()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Printf("Error shutting down tracer provider: %v", err)
@@ -54,9 +57,10 @@ func main() {
 	brokerList := strings.Split(*brokers, ",")
 	log.Printf("Kafka brokers: %s", strings.Join(brokerList, ", "))
 
-	producer := newAccessLogProducer(brokerList)
-
-	rand.Seed(time.Now().Unix())
+	producer, err := newAccessLogProducer(brokerList)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Create root span
 	tr := otel.Tracer("producer")
@@ -64,10 +68,11 @@ func main() {
 	defer span.End()
 
 	// Inject tracing info into message
+	rng := rand.New(rand.NewSource(time.Now().Unix()))
 	msg := sarama.ProducerMessage{
 		Topic: example.KafkaTopic,
 		Key:   sarama.StringEncoder("random_number"),
-		Value: sarama.StringEncoder(fmt.Sprintf("%d", rand.Intn(1000))),
+		Value: sarama.StringEncoder(fmt.Sprintf("%d", rng.Intn(1000))),
 	}
 	otel.GetTextMapPropagator().Inject(ctx, otelsarama.NewProducerMessageCarrier(&msg))
 
@@ -75,14 +80,14 @@ func main() {
 	successMsg := <-producer.Successes()
 	log.Println("Successful to write message, offset:", successMsg.Offset)
 
-	err := producer.Close()
+	err = producer.Close()
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		log.Fatalln("Failed to close producer:", err)
 	}
 }
 
-func newAccessLogProducer(brokerList []string) sarama.AsyncProducer {
+func newAccessLogProducer(brokerList []string) (sarama.AsyncProducer, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_5_0_0
 	// So we can know the partition and offset of messages.
@@ -90,7 +95,7 @@ func newAccessLogProducer(brokerList []string) sarama.AsyncProducer {
 
 	producer, err := sarama.NewAsyncProducer(brokerList, config)
 	if err != nil {
-		log.Fatalln("Failed to start Sarama producer:", err)
+		return nil, fmt.Errorf("starting Sarama producer: %w", err)
 	}
 
 	// Wrap instrumentation
@@ -103,5 +108,5 @@ func newAccessLogProducer(brokerList []string) sarama.AsyncProducer {
 		}
 	}()
 
-	return producer
+	return producer, nil
 }

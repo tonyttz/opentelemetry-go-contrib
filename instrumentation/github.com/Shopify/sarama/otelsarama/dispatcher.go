@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package otelsarama
+package otelsarama // import "go.opentelemetry.io/contrib/instrumentation/github.com/Shopify/sarama/otelsarama"
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/Shopify/sarama"
 
-	"go.opentelemetry.io/contrib/instrumentation/github.com/Shopify/sarama/otelsarama/internal"
 	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -61,18 +61,18 @@ func (w *consumerMessagesDispatcherWrapper) Run() {
 
 		// Create a span.
 		attrs := []attribute.KeyValue{
-			semconv.MessagingSystemKey.String("kafka"),
+			semconv.MessagingSystem("kafka"),
 			semconv.MessagingDestinationKindTopic,
-			semconv.MessagingDestinationKey.String(msg.Topic),
+			semconv.MessagingDestinationName(msg.Topic),
 			semconv.MessagingOperationReceive,
-			semconv.MessagingMessageIDKey.String(strconv.FormatInt(msg.Offset, 10)),
-			internal.KafkaPartitionKey.Int64(int64(msg.Partition)),
+			semconv.MessagingMessageID(strconv.FormatInt(msg.Offset, 10)),
+			semconv.MessagingKafkaSourcePartition(int(msg.Partition)),
 		}
 		opts := []trace.SpanStartOption{
 			trace.WithAttributes(attrs...),
 			trace.WithSpanKind(trace.SpanKindConsumer),
 		}
-		newCtx, span := w.cfg.Tracer.Start(parentSpanContext, "kafka.consume", opts...)
+		newCtx, span := w.cfg.Tracer.Start(parentSpanContext, fmt.Sprintf("%s receive", msg.Topic), opts...)
 
 		// Inject current span context, so consumers can use it to propagate span.
 		w.cfg.Propagators.Inject(newCtx, carrier)

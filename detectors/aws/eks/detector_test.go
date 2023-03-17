@@ -24,32 +24,32 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 type MockDetectorUtils struct {
 	mock.Mock
 }
 
-// Mock function for fileExists()
+// Mock function for fileExists().
 func (detectorUtils *MockDetectorUtils) fileExists(filename string) bool {
 	args := detectorUtils.Called(filename)
 	return args.Bool(0)
 }
 
-// Mock function for getConfigMap()
+// Mock function for getConfigMap().
 func (detectorUtils *MockDetectorUtils) getConfigMap(_ context.Context, namespace string, name string) (map[string]string, error) {
 	args := detectorUtils.Called(namespace, name)
 	return args.Get(0).(map[string]string), args.Error(1)
 }
 
-// Mock function for getContainerID()
+// Mock function for getContainerID().
 func (detectorUtils *MockDetectorUtils) getContainerID() (string, error) {
 	args := detectorUtils.Called()
 	return args.String(0), args.Error(1)
 }
 
-// Tests EKS resource detector running in EKS environment
+// Tests EKS resource detector running in EKS environment.
 func TestEks(t *testing.T) {
 	detectorUtils := new(MockDetectorUtils)
 
@@ -64,8 +64,8 @@ func TestEks(t *testing.T) {
 	eksResourceLabels := []attribute.KeyValue{
 		semconv.CloudProviderAWS,
 		semconv.CloudPlatformAWSEKS,
-		semconv.K8SClusterNameKey.String("my-cluster"),
-		semconv.ContainerIDKey.String("0123456789A"),
+		semconv.K8SClusterName("my-cluster"),
+		semconv.ContainerID("0123456789A"),
 	}
 	expectedResource := resource.NewWithAttributes(semconv.SchemaURL, eksResourceLabels...)
 
@@ -78,7 +78,7 @@ func TestEks(t *testing.T) {
 	detectorUtils.AssertExpectations(t)
 }
 
-// Tests EKS resource detector not running in EKS environment
+// Tests EKS resource detector not running in EKS environment.
 func TestNotEKS(t *testing.T) {
 	detectorUtils := new(MockDetectorUtils)
 

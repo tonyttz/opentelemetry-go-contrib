@@ -12,32 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package otelgocql
+package otelgocql // import "go.opentelemetry.io/contrib/instrumentation/github.com/gocql/gocql/otelgocql"
 
 import (
 	"log"
 
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gocql/gocql/otelgocql/internal"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/unit"
+	"go.opentelemetry.io/otel/metric/instrument"
 )
 
 type instruments struct {
 	// queryCount is the number of queries executed.
-	queryCount metric.Int64Counter
+	queryCount instrument.Int64Counter
 
 	// queryRows is the number of rows returned by a query.
-	queryRows metric.Int64Histogram
+	queryRows instrument.Int64Histogram
 
 	// batchCount is the number of batch queries executed.
-	batchCount metric.Int64Counter
+	batchCount instrument.Int64Counter
 
 	// connectionCount is the number of connections made
 	// with the traced session.
-	connectionCount metric.Int64Counter
+	connectionCount instrument.Int64Counter
 
 	// latency is the sum of attempt latencies.
-	latency metric.Int64Histogram
+	latency instrument.Int64Histogram
 }
 
 // newInstruments will create instruments using a meter
@@ -50,38 +50,38 @@ func newInstruments(p metric.MeterProvider) *instruments {
 	instruments := &instruments{}
 	var err error
 
-	if instruments.queryCount, err = meter.NewInt64Counter(
+	if instruments.queryCount, err = meter.Int64Counter(
 		"db.cassandra.queries",
-		metric.WithDescription("Number queries executed"),
+		instrument.WithDescription("Number queries executed"),
 	); err != nil {
 		log.Printf("failed to create iQueryCount instrument, %v", err)
 	}
 
-	if instruments.queryRows, err = meter.NewInt64Histogram(
+	if instruments.queryRows, err = meter.Int64Histogram(
 		"db.cassandra.rows",
-		metric.WithDescription("Number of rows returned from query"),
+		instrument.WithDescription("Number of rows returned from query"),
 	); err != nil {
 		log.Printf("failed to create iQueryRows instrument, %v", err)
 	}
 
-	if instruments.batchCount, err = meter.NewInt64Counter(
+	if instruments.batchCount, err = meter.Int64Counter(
 		"db.cassandra.batch.queries",
-		metric.WithDescription("Number of batch queries executed"),
+		instrument.WithDescription("Number of batch queries executed"),
 	); err != nil {
 		log.Printf("failed to create iBatchCount instrument, %v", err)
 	}
 
-	if instruments.connectionCount, err = meter.NewInt64Counter(
+	if instruments.connectionCount, err = meter.Int64Counter(
 		"db.cassandra.connections",
-		metric.WithDescription("Number of connections created"),
+		instrument.WithDescription("Number of connections created"),
 	); err != nil {
 		log.Printf("failed to create iConnectionCount instrument, %v", err)
 	}
 
-	if instruments.latency, err = meter.NewInt64Histogram(
+	if instruments.latency, err = meter.Int64Histogram(
 		"db.cassandra.latency",
-		metric.WithDescription("Sum of latency to host in milliseconds"),
-		metric.WithUnit(unit.Milliseconds),
+		instrument.WithDescription("Sum of latency to host in milliseconds"),
+		instrument.WithUnit("ms"),
 	); err != nil {
 		log.Printf("failed to create iLatency instrument, %v", err)
 	}
